@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from .model import AdaptiveAttractorLayer, FrameRecord
-from .presets import cat_demo
+from .presets import FREQUENCY_BANDS_HZ, cat_demo
 
 
 class LayerView(QWidget):
@@ -81,6 +81,58 @@ class LayerView(QWidget):
 
         p.setPen(QPen(QColor(0, 0, 0, 40), 1))
         p.drawRect(self.rect().adjusted(8, 36, -8, -8))
+
+
+class SpectrumView(QWidget):
+    def __init__(self, bands_hz: tuple[int, ...], parent=None):
+        super().__init__(parent)
+        self.bands_hz = bands_hz
+        self.values = [0.0] * len(bands_hz)
+        self.setFixedHeight(92)
+
+    def set_values(self, values) -> None:
+        values = list(values)
+        if len(values) != len(self.bands_hz):
+            values = [0.0] * len(self.bands_hz)
+        self.values = values
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.fillRect(self.rect(), QColor("#ffffff"))
+        p.setPen(QPen(QColor("#1f2328"), 1))
+
+        title_font = QFont()
+        title_font.setPointSize(9)
+        title_font.setBold(True)
+        p.setFont(title_font)
+        p.drawText(12, 17, "incoming spectral energy")
+
+        left = 12.0
+        right = 12.0
+        top = 26.0
+        baseline = self.height() - 22.0
+        width = max(1.0, self.width() - left - right)
+        slot = width / max(len(self.values), 1)
+        bar_w = max(5.0, slot * 0.55)
+        for i, (hz, value) in enumerate(zip(self.bands_hz, self.values)):
+            x = left + i * slot + (slot - bar_w) * 0.5
+            height = max(0.0, min(1.0, float(value))) * (baseline - top)
+            p.setBrush(QColor("#5b7fb3"))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(
+                QRectF(x, baseline - height, bar_w, height),
+                2,
+                2,
+            )
+            p.setPen(QPen(QColor("#555"), 1))
+            label = f"{hz // 1000}k" if hz >= 1000 else str(hz)
+            p.drawText(
+                QRectF(x - 8, baseline + 2, bar_w + 16, 16),
+                Qt.AlignCenter,
+                label,
+            )
 
 
 class CompetitionView(QWidget):
@@ -160,6 +212,7 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.observed_label)
         controls.addStretch(1)
 
+        self.spectrum = SpectrumView(FREQUENCY_BANDS_HZ)
         self.acoustic_view = LayerView(
             self.sim.acoustic,
             "1 · acoustic feature field",
@@ -193,6 +246,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(root)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.addLayout(controls)
+        layout.addWidget(self.spectrum)
         layout.addLayout(views, 1)
         layout.addWidget(note)
         self.setCentralWidget(root)
@@ -220,6 +274,7 @@ class MainWindow(QMainWindow):
         self.run_btn.setText("Run")
         self.sim.reset()
         self.competition.set_values(self.sim.lexical.activations)
+        self.spectrum.set_values([0.0] * len(FREQUENCY_BANDS_HZ))
         self._refresh_status(None)
         self._update_views()
 
@@ -246,6 +301,8 @@ class MainWindow(QMainWindow):
         self.phoneme_view.update()
         self.lexical_view.update()
         self.competition.set_values(self.sim.lexical.activations)
+        if self.sim.records:
+            self.spectrum.set_values(self.sim.records[-1].stimulus)
 
     def _refresh_status(self, record: FrameRecord | None) -> None:
         t = 0.0 if record is None else record.t_ms
