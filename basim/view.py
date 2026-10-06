@@ -6,7 +6,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QBrush
 from PySide6.QtWidgets import QWidget
 
 from .attractor import CompetitiveAttractorLayer
-from .types import SimulationSnapshot
+from .domain import SimulationSnapshot
 
 
 class SpectrogramView(QWidget):

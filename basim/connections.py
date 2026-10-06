@@ -5,7 +5,7 @@ from collections import deque
 
 import numpy as np
 
-from .types import ConnectionConfig
+from .domain import ConnectionConfig
 
 
 class LeakyDelayConnection:

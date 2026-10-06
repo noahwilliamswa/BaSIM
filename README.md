@@ -27,12 +27,14 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
 pip install -e .
-python -m basim
+python main.py
 ```
 
-or:
+The package entry points remain available too:
 
 ```bash
+python -m basim
+# or
 basim
 ```
 

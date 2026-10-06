@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from .types import LayerSnapshot
+from .domain import LayerSnapshot
 
 
 class CompetitiveAttractorLayer:
