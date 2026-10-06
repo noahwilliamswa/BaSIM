@@ -24,7 +24,7 @@ class AcousticSegment:
     label: str
     start_ms: float
     end_ms: float
-    vector: tuple[float, float]
+    vector: tuple[float, ...]
     strength: float = 1.0
 
 
@@ -35,11 +35,17 @@ class StimulusProgram:
     duration_ms: float = 1000.0
     edge_ms: float = 70.0
 
+    @property
+    def feature_dim(self) -> int:
+        if not self.segments:
+            return 0
+        return len(self.segments[0].vector)
+
     def sample(self, t_ms: float) -> tuple[Array, float]:
         if t_ms < 0.0 or t_ms >= self.duration_ms:
-            return np.zeros(2, dtype=float), 0.0
+            return np.zeros(self.feature_dim, dtype=float), 0.0
 
-        weighted = np.zeros(2, dtype=float)
+        weighted = np.zeros(self.feature_dim, dtype=float)
         total = 0.0
         edge = max(self.edge_ms, 1e-6)
         for seg in self.segments:
@@ -52,7 +58,7 @@ class StimulusProgram:
             total += weight
 
         if total <= 1e-9:
-            return np.zeros(2, dtype=float), 0.0
+            return np.zeros(self.feature_dim, dtype=float), 0.0
         return weighted / total, min(total, 1.0)
 
 
@@ -192,12 +198,13 @@ class WordCandidate:
 
 
 class CohortTracker:
-    """Incremental word-candidate evidence from a changing phoneme distribution.
+    """Incremental lexical evidence from soft, changing phoneme distributions.
 
-    The tracker does not pretend to be a full spoken-word-recognition model.
-    It keeps a soft prefix score for each word and only advances its discrete
-    phoneme history when the dominant phoneme is stable long enough. That gives
-    the lexical layer a changing cohort rather than a single post-hoc label.
+    Event boundaries are detected from distribution change rather than from a
+    predeclared phoneme schedule. Each committed event stores the whole soft
+    phoneme distribution; word candidates are scored by the probability of
+    their expected phoneme at that sequence position. The argmax label is kept
+    only for display.
     """
 
     def __init__(
@@ -206,43 +213,55 @@ class CohortTracker:
         candidates: Sequence[WordCandidate],
         min_confidence: float = 0.42,
         min_dwell_ms: float = 98.0,
+        change_threshold: float = 0.34,
     ):
         self.phoneme_labels = tuple(phoneme_labels)
         self.candidates = tuple(candidates)
         self.min_confidence = min_confidence
         self.min_dwell_ms = min_dwell_ms
+        self.change_threshold = change_threshold
         self.reset()
 
     def reset(self) -> None:
         self.observed: list[str] = []
-        self._current: str | None = None
-        self._dwell_ms = 0.0
-        self._committed_current = False
+        self.observed_events: list[Array] = []
+        self._last_event: Array | None = None
+        self._candidate_sum: Array | None = None
+        self._candidate_count = 0
+        self._candidate_dwell_ms = 0.0
         self._scores = np.asarray(
             [np.log(max(c.prior, 1e-6)) for c in self.candidates],
             dtype=float,
         )
 
-    def _commit(self, phoneme: str, distribution: Array) -> None:
-        if self.observed and self.observed[-1] == phoneme:
+    def _reset_candidate(self) -> None:
+        self._candidate_sum = None
+        self._candidate_count = 0
+        self._candidate_dwell_ms = 0.0
+
+    def _commit(self, distribution: Array) -> None:
+        distribution = np.asarray(distribution, dtype=float)
+        total = float(distribution.sum())
+        if total <= 0.0:
             return
-        self.observed.append(phoneme)
-        pos = len(self.observed) - 1
-        floor = 0.04
+        distribution = distribution / total
+        self._last_event = distribution.copy()
+        self.observed_events.append(distribution.copy())
+        self.observed.append(self.phoneme_labels[int(np.argmax(distribution))])
+
+        pos = len(self.observed_events) - 1
+        floor = 0.025
         for i, candidate in enumerate(self.candidates):
-            if pos < len(candidate.phonemes):
-                expected = candidate.phonemes[pos]
-                try:
-                    expected_idx = self.phoneme_labels.index(expected)
-                    p_expected = float(distribution[expected_idx])
-                except ValueError:
-                    p_expected = floor
-                if expected == phoneme:
-                    self._scores[i] += np.log(max(0.55 + 0.45 * p_expected, floor))
-                else:
-                    self._scores[i] += np.log(max(0.06 + 0.34 * p_expected, floor))
-            else:
-                self._scores[i] += np.log(0.08)
+            if pos >= len(candidate.phonemes):
+                self._scores[i] += np.log(0.05)
+                continue
+            expected = candidate.phonemes[pos]
+            try:
+                expected_idx = self.phoneme_labels.index(expected)
+                p_expected = float(distribution[expected_idx])
+            except ValueError:
+                p_expected = 0.0
+            self._scores[i] += np.log(max(floor + 0.975 * p_expected, floor))
 
     def step(
         self,
@@ -253,28 +272,44 @@ class CohortTracker:
         probs = np.asarray(phoneme_distribution, dtype=float)
         if probs.shape != (len(self.phoneme_labels),):
             raise ValueError("phoneme distribution has wrong shape")
+        total = float(probs.sum())
+        if total > 0.0:
+            probs = probs / total
 
-        if active:
-            idx = int(np.argmax(probs))
-            label = self.phoneme_labels[idx]
-            confidence = float(probs[idx])
-            if confidence >= self.min_confidence:
-                if label != self._current:
-                    self._current = label
-                    self._dwell_ms = dt_ms
-                    self._committed_current = False
+        confident = active and float(probs.max()) >= self.min_confidence
+        if confident:
+            if self._last_event is None:
+                changed = True
+            elif int(np.argmax(probs)) == int(np.argmax(self._last_event)):
+                changed = False
+            else:
+                changed = (
+                    0.5 * float(np.abs(probs - self._last_event).sum())
+                    >= self.change_threshold
+                )
+
+            if changed:
+                if self._candidate_sum is None:
+                    self._candidate_sum = probs.copy()
+                    self._candidate_count = 1
+                    self._candidate_dwell_ms = dt_ms
                 else:
-                    self._dwell_ms += dt_ms
-                if self._dwell_ms >= self.min_dwell_ms and not self._committed_current:
-                    self._commit(label, probs)
-                    self._committed_current = True
+                    self._candidate_sum += probs
+                    self._candidate_count += 1
+                    self._candidate_dwell_ms += dt_ms
+                if self._candidate_dwell_ms >= self.min_dwell_ms:
+                    event = self._candidate_sum / max(self._candidate_count, 1)
+                    self._commit(event)
+                    self._reset_candidate()
+            else:
+                self._reset_candidate()
+        elif not active:
+            self._reset_candidate()
 
-        # A small unfinished-word penalty keeps exact-length candidates competitive
-        # once input stops, but does not force a decision before the sound unfolds.
         adjusted = self._scores.copy()
-        if not active and self.observed:
+        if not active and self.observed_events:
             for i, candidate in enumerate(self.candidates):
-                remaining = max(0, len(candidate.phonemes) - len(self.observed))
+                remaining = max(0, len(candidate.phonemes) - len(self.observed_events))
                 adjusted[i] -= 0.7 * remaining
         return _softmax(adjusted, temperature=0.55)
 
@@ -282,7 +317,7 @@ class CohortTracker:
 @dataclass(frozen=True)
 class FrameRecord:
     t_ms: float
-    stimulus: tuple[float, float]
+    stimulus: tuple[float, ...]
     stimulus_strength: float
     acoustic: LayerSnapshot
     phoneme: LayerSnapshot
@@ -298,6 +333,7 @@ class SpeechAttractorSimulation:
         acoustic: AdaptiveAttractorLayer,
         phoneme: AdaptiveAttractorLayer,
         lexical: AdaptiveAttractorLayer,
+        acoustic_templates: Array,
         acoustic_to_phoneme: Array,
         cohort: CohortTracker,
         dt_ms: float = 49.0,
@@ -307,10 +343,18 @@ class SpeechAttractorSimulation:
         self.acoustic = acoustic
         self.phoneme = phoneme
         self.lexical = lexical
+        self.acoustic_templates = np.asarray(acoustic_templates, dtype=float)
         self.acoustic_to_phoneme = np.asarray(acoustic_to_phoneme, dtype=float)
         self.cohort = cohort
         self.dt_ms = float(dt_ms)
         self.total_ms = float(total_ms)
+        if self.acoustic_templates.shape != (
+            len(self.acoustic.labels),
+            self.stimulus.feature_dim,
+        ):
+            raise ValueError(
+                "acoustic template matrix shape does not match stimulus/layer sizes"
+            )
         if self.acoustic_to_phoneme.shape != (
             len(self.phoneme.labels),
             len(self.acoustic.labels),
@@ -331,16 +375,19 @@ class SpeechAttractorSimulation:
     def _acoustic_evidence(self, vector: Array, strength: float) -> Array:
         if strength <= 0.0:
             return np.zeros(len(self.acoustic.labels), dtype=float)
-        centers = np.asarray(
-            [a.center for a in self.acoustic.config.attractors],
-            dtype=float,
+        vector = np.asarray(vector, dtype=float)
+        vnorm = float(np.linalg.norm(vector))
+        if vnorm <= 1e-9:
+            return np.zeros(len(self.acoustic.labels), dtype=float)
+        unit_vector = vector / vnorm
+        template_norms = np.linalg.norm(
+            self.acoustic_templates,
+            axis=1,
+            keepdims=True,
         )
-        widths = np.asarray(
-            [max(a.width, 1e-4) for a in self.acoustic.config.attractors],
-            dtype=float,
-        )
-        delta = centers - vector[None, :]
-        sim = np.exp(-np.sum(delta * delta, axis=1) / (2.0 * widths * widths))
+        unit_templates = self.acoustic_templates / np.maximum(template_norms, 1e-9)
+        delta = unit_templates - unit_vector[None, :]
+        sim = np.exp(-np.sum(delta * delta, axis=1) / (2.0 * 0.34**2))
         if float(sim.max()) > 0.0:
             sim /= float(sim.max())
         return np.clip(sim * strength, 0.0, 1.0)
@@ -367,7 +414,7 @@ class SpeechAttractorSimulation:
 
         record = FrameRecord(
             t_ms=self.t_ms,
-            stimulus=(float(vector[0]), float(vector[1])),
+            stimulus=tuple(float(v) for v in vector),
             stimulus_strength=float(strength),
             acoustic=acoustic_snap,
             phoneme=phoneme_snap,
