@@ -6,7 +6,7 @@ from .attractor import CompetitiveAttractorLayer
 from .connections import LeakyDelayConnection
 from .lexical import OnlineLexicalMatcher
 from .stimuli import LEXICON, PHONEME_SPECTRA, SpectralEncoder, default_stimulus, phoneme_prototypes, prototype_similarity
-from .types import SimulationConfig, SimulationSnapshot, StimulusProgram
+from .domain import SimulationConfig, SimulationSnapshot, StimulusProgram
 
 
 class BaSimEngine:

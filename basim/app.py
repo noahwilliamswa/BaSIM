@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 
 from .engine import BaSimEngine
 from .stimuli import SpectralEncoder, ambiguous_onset_stimulus, default_stimulus
-from .types import SimulationConfig
+from .domain import SimulationConfig
 from .view import AttractorView, SpectrogramView
 
 

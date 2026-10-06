@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .types import (
+from .domain import (
     DEFAULT_FREQUENCY_BANDS_HZ,
     AcousticFrame,
     SpectrumFrame,

@@ -3,7 +3,7 @@
 from .connections import LeakyDelayConnection
 from .engine import BaSimEngine
 from .stimuli import ambiguous_onset_stimulus, default_stimulus
-from .types import (
+from .domain import (
     AcousticFrame,
     ConnectionConfig,
     SimulationConfig,
