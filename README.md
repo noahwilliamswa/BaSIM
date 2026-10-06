@@ -1,14 +1,24 @@
 # BaSIM
 
-**BaSIM** is an interactive explainer for layered attractor dynamics in speech perception. It is a fresh implementation built around continuous propagation rather than the older "settle one basin, then drop into the next" behavior.
+**BaSIM** is an interactive explainer for layered attractor dynamics in speech perception. It models a time-varying acoustic signal propagating continuously through three competitive dynamical layers:
 
-The default demo presents a 1-second schematic `/B AE T/` acoustic event and then lets the model continue evolving for 5 seconds at ~49 ms per step:
+`frequency bands → phoneme candidates → lexical candidates`
 
-`acoustic features → phoneme candidates → lexical candidates`
+The default demo presents a synthetic 1-second `/B AE T/` event inside a 5-second simulation. The model advances in **49 ms** steps. Every layer updates on every step, connection delays are explicit, and state continues to evolve after the external sound ends.
 
-Every layer updates on every step. Candidate activation, lateral competition, recurrence, and adaptation reshape the displayed basin landscape while the stimulus is still entering the system. The lexical layer performs online sequence matching and can optionally send weak feedback to the phoneme layer.
+BaSIM is intentionally a **toy explanatory model**. The frequency bands are coarse, the phoneme spectra are hand-authored, and the 2D basin geometry is a visualization of competition rather than a claim about literal cortical geometry.
 
-This is intentionally a **toy explanatory model**, not a claim that the displayed 2D manifolds or hand-authored acoustic prototypes are literal neural geometry.
+## What is implemented
+
+- Eight-band spectrotemporal input representation.
+- Synthetic `/BAT/` and ambiguous `/B/P/AT/` stimuli with one-step spectral crossfades.
+- Dynamic frequency-band, phoneme, and lexical attractor layers.
+- Recurrent support, lateral inhibition, and slow adaptation/fatigue within each layer.
+- Configurable **delayed, leaky connections** between layers instead of instantaneous hand-off.
+- Fully soft online lexical sequence matching: word candidates accumulate mass across phoneme positions without hard phoneme commits.
+- Optional delayed lexical → phoneme feedback.
+- A PySide6 viewer with a live spectrogram, changing basin landscapes, and ranked candidate activations.
+- Regression tests for timing, causal delay, propagation, ambiguity, adaptive basin depth, and lexical convergence.
 
 ## Run
 
@@ -33,20 +43,17 @@ pip install -e ".[dev]"
 pytest
 ```
 
-## Current model
+## Current default timing
 
-- **49 ms** simulation step by default.
-- **1.0 s** built-in acoustic event inside a **5.0 s** simulation.
-- Dynamic acoustic-feature, phoneme-candidate, and lexical-candidate attractor layers.
-- Continuous feed-forward propagation; no layer waits for the previous layer to settle.
-- Recurrent support, lateral inhibition, and slow adaptation/fatigue.
-- Online lexical sequence matching, so partially matching words remain active competitors.
-- Optional lexical → phoneme feedback.
-- PySide6 visualization of changing basin depths, state trajectory, and top activations.
-- Alternate ambiguous-onset demo for exploring competition.
+- simulation step: **49 ms**
+- acoustic event: **1.0 s**
+- simulation window: **5.0 s**
+- frequency → phoneme delay: **49 ms**, with **98 ms** leaky integration
+- phoneme → lexical delay: **49 ms**, with **147 ms** leaky integration
+- lexical → phoneme feedback delay: **98 ms**, with **196 ms** leaky integration
 
-See [`docs/model.md`](docs/model.md) for the model contract, scientific boundaries, and background reading.
+See [`docs/model.md`](docs/model.md) for the model contract and the line between the explanatory mechanism and biological claims.
 
-## Next logical steps
+## Next useful experiments
 
-The clean extension path is to replace schematic feature frames with a real time-frequency front end, move phoneme/word prototypes into data/config files, add trial recording/export, and then compare feed-forward-only vs interactive feedback conditions under controlled ambiguous stimuli.
+The next model-facing work should be driven by comparisons rather than more UI surface area: vary connection delays and integration constants, compare feedback-on vs feed-forward-only ambiguous trials, add multiple word families, and replace the synthetic band sequence with an STFT/audio front end while preserving the same downstream contracts.

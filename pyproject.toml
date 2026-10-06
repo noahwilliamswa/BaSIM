@@ -4,9 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "basim-attractor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Interactive explainer for layered attractor dynamics in speech perception"
-readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26",

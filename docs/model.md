@@ -1,53 +1,103 @@
 # BaSIM model contract
 
-BaSIM is an explanatory dynamical-systems toy, not a biologically faithful auditory or language model. Its purpose is to make continuous competition, persistence, and cross-level influence visible.
+BaSIM is an explanatory dynamical-systems model for reasoning about incremental speech integration. It is not a biologically faithful auditory-cortex simulation and it is not intended to be a production speech recognizer.
 
-## Time
+## Clock and causal propagation
 
-- Default simulation step: **49 ms**.
-- Default acoustic event: **1.0 s**.
-- Default simulation window: **5.0 s**.
-- Layers update on every simulation step. A layer does **not** wait to settle before the next layer receives information.
-- State persists after the acoustic event and decays/adapts rather than disappearing immediately.
+The default integration step is **49 ms**. A built-in speech event lasts **1.0 s**, while the model continues through a **5.0 s** window.
 
-## Three manifolds
+At every tick:
 
-### 1. Acoustic-feature manifold
+1. sample the current spectrum;
+2. update the frequency-band attractor layer;
+3. send that population through a delayed, leaky connection;
+4. compute graded phoneme evidence and update the phoneme layer;
+5. send the phoneme population through another delayed, leaky connection;
+6. update soft lexical sequence evidence and the lexical attractor layer;
+7. send optional lexical feedback through its own delayed, leaky connection;
+8. record the full state.
 
-Input is a small normalized feature vector: two formant-ish dimensions plus voicing, burst, frication, and amplitude. The displayed basins correspond to feature channels, not literal cortical columns or measured neural populations.
+No layer waits for another layer to settle. Equally important, no downstream layer receives information instantaneously: inter-layer delay and integration are explicit model objects.
 
-### 2. Phoneme-candidate manifold
+### Default connections
 
-Phoneme candidates receive similarity-weighted support from the feature layer. Candidates compete laterally, retain activation recurrently, and accumulate fatigue. These terms continuously alter basin depth, so the landscape changes while the stimulus is arriving.
+| connection | delay | integration time constant |
+| --- | ---: | ---: |
+| frequency → phoneme | 49 ms | 98 ms |
+| phoneme → lexical | 49 ms | 147 ms |
+| lexical → phoneme | 98 ms | 196 ms |
 
-### 3. Lexical-candidate manifold
+`LeakyDelayConnection` first delays the source population by an integer number of model ticks and then applies a first-order low-pass filter. These values are parameters for experiments, not measured biological constants.
 
-Word candidates are matched online against the evolving phoneme population. Each candidate carries probability-like mass across positions in its phoneme template. A rise in the expected next phoneme advances that mass. Nearby word candidates therefore become partially active in parallel instead of waiting for a hard phoneme decision.
+## Input: time × frequency
 
-A weak optional lexical feedback signal is returned to the phoneme layer on the next step. This is included to expose the consequences of an interactive architecture, not to claim that lexical feedback is the uniquely correct account of human speech perception.
+The native input is now a `SpectrumFrame`: energy in eight coarse frequency bands centered at 250, 500, 750, 1000, 1500, 2000, 3000, and 4500 Hz. A `StimulusProgram` supplies one frame at each time point and crossfades adjacent synthetic segments over 49 ms.
 
-## Attractor dynamics
+The built-in phoneme spectra are hand-authored templates designed to create controlled ambiguity and separability. They are not empirical average spectra. The older `AcousticFrame` type is retained only as a compatibility input and is mapped into the fixed-band representation.
 
-For each layer, candidate activation is updated from:
+## Layer dynamics
 
-- current bottom-up evidence,
-- recurrent self-support,
-- lateral inhibition from competitors,
+Each `CompetitiveAttractorLayer` keeps a population activation vector, a fatigue vector, dynamic basin depths, and a 2D visualization state.
+
+Population activation is driven by:
+
+- current incoming evidence;
+- recurrent self-support;
+- lateral inhibition from competitors;
 - slow adaptation/fatigue.
 
-Candidate activation changes the depth of its 2D Gaussian basin. A visible state point moves downhill through the resulting landscape with inertia. The 2D position is a visualization of competition; it is not asserted to be a recovered neural state-space coordinate.
+Activation then changes the depth of each visible Gaussian basin. The 2D point moves through the resulting potential field with inertia. **Categorical activation is not read from the 2D point.** The geometry is a visualization of the population competition, which avoids allowing arbitrary display coordinates to determine the model's answer.
 
-## Why this architecture
+## Frequency → phoneme mapping
 
-The design borrows a few qualitative commitments from interactive-activation accounts of spoken-word recognition: acoustic/feature information unfolds over time; phoneme and lexical candidates can be partially active simultaneously; within-level candidates compete; activation persists after transient input; and feedback can be explored as a parameter rather than baked in as a truth claim.
+Each phoneme has a synthetic eight-band prototype. The delayed frequency population is compared with every prototype using a transparent radial similarity metric. Similarity is sharpened before it is used as phoneme evidence so nearby but incompatible templates can still compete without every candidate remaining strongly active.
 
-Useful background:
+## Soft lexical sequence integration
 
-- McClelland & Elman-style TRACE architecture summarized in: https://pmc.ncbi.nlm.nih.gov/articles/PMC3759031/
-- Continuous lexical competition in real-time spoken-word recognition: https://pmc.ncbi.nlm.nih.gov/articles/PMC1177386/
-- Lexically guided perceptual tuning / interactive Hebbian account: https://pmc.ncbi.nlm.nih.gov/articles/PMC2291357/
-- Neural evidence for context-dependent warping during speech categorization: https://pmc.ncbi.nlm.nih.gov/articles/PMC8984957/
+`OnlineLexicalMatcher` never commits a single phoneme label. Each word owns soft mass over prefix positions:
 
-## Explicit non-claims
+- position 0 means no phonemes matched yet;
+- position 1 means evidence has supported the first phoneme;
+- subsequent positions represent progressively longer prefixes;
+- mass persists with a finite memory time constant;
+- mass advances in proportion to the **graded activation** of the expected next phoneme.
 
-BaSIM currently does not model cochlear mechanics, a real spectrogram, spike trains, cortical anatomy, synaptic plasticity, measured attractor geometry, realistic phonetic acoustics, or a production-quality recognizer. The built-in phoneme prototypes are deliberately schematic. They exist to make the system inspectable before real data and more constrained models are connected later.
+For example, after an ambiguous `/B/P/` onset, both `BAT` and `PAT` can carry non-zero lexical evidence. Later `/AE/` and `/T/` evidence can resolve the competition without requiring an earlier discrete B-or-P decision.
+
+This is a deliberately small sequence integrator, not TRACE, Shortlist, an HMM recognizer, or a neural language model.
+
+## Feedback
+
+Lexical candidates can provide a soft prediction over phonemes that is delayed and low-pass filtered before being added back into phoneme evidence. The feedback gain can be set to zero for a feed-forward condition.
+
+Feedback exists here as an experimental manipulation. BaSIM does not treat lexical feedback as settled biological fact.
+
+## Scientific boundaries
+
+BaSIM currently does **not** model:
+
+- cochlear mechanics or auditory-nerve encoding;
+- an empirical spectrogram front end;
+- spiking neurons or synaptic conductances;
+- cortical anatomy;
+- learned phonetic categories;
+- measured attractor geometry;
+- realistic lexical frequency statistics;
+- motor or semantic systems.
+
+The valuable claim is narrower: continuous evidence, recurrent competition, finite integration windows, adaptation, causal delays, and soft sequence accumulation can be made inspectable in one small model.
+
+## Validation targets
+
+The regression suite currently checks that:
+
+- a 5 s run at 49 ms produces the expected number of frames;
+- the synthetic signal is truly represented as frequency-band energy and ends at 1 s;
+- a two-tick connection delay does not leak evidence early;
+- phoneme and lexical layers become active before the sound is finished;
+- stimulus history changes basin depths;
+- `/BAT/` eventually beats close competitors;
+- an ambiguous `/B/P/` onset preserves both candidates early;
+- the lexical matcher keeps multiple word hypotheses alive without hard phoneme commits.
+
+The next useful validation work is experimental: sweep delays/time constants, quantify ambiguity resolution, compare feedback conditions, and then substitute real audio-derived spectra while keeping these behavioral tests.
