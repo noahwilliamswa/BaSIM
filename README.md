@@ -4,7 +4,7 @@ BaSIM is a lightweight interactive explainer for **time-varying, layered attract
 
 The current refactor models a synthetic one-second acoustic stimulus flowing through three continuously updating representational layers:
 
-1. **Acoustic feature field** — a low-dimensional feature trajectory deforms a set of acoustic attractors.
+1. **Acoustic feature field** — an eight-band time-frequency energy trajectory deforms a set of acoustic attractors.
 2. **Phoneme field** — acoustic activations continuously bias competing phoneme attractors.
 3. **Lexical field** — a soft cohort tracker turns the evolving phoneme distribution into word-candidate evidence, which deforms a final competitive attractor field.
 
@@ -18,7 +18,7 @@ The design is inspired by broad properties of spoken-word-recognition models suc
 
 ## Current demo
 
-The bundled preset presents a synthetic `/k æ t/` trajectory and a small lexical cohort:
+The bundled preset presents a synthetic eight-band `/k æ t/` spectral trajectory and a small lexical cohort:
 
 - `cat`
 - `cap`
@@ -49,6 +49,6 @@ pytest
 
 `src/basim/model.py` contains the simulation contract and no Qt code. `AdaptiveAttractorLayer` owns leaky evidence integration, adaptive basin depth, occupancy fatigue, field dynamics, and activation readout. `CohortTracker` is a deliberately separate transformation between phoneme and lexical representations so that sequence-sensitive evidence is not hidden inside the geometry.
 
-`src/basim/presets.py` defines the current synthetic stimulus, layer geometries, acoustic-to-phoneme projection, and lexical cohort. `src/basim/ui.py` is only a viewer/controller over the core model.
+`src/basim/presets.py` defines the synthetic eight-band stimulus, spectral templates, layer geometries, acoustic-to-phoneme projection, and lexical cohort. `src/basim/ui.py` is only a viewer/controller over the core model.
 
 This separation is intentional: future BaSIM experiments should be able to replace the evidence mapping or dynamics without rewriting the interface.
