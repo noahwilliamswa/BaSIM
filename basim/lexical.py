@@ -1,62 +1,83 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
 class OnlineLexicalMatcher:
-    """Continuously align phoneme activations with competing word templates."""
+    """Soft forward alignment from phoneme populations to competing word templates.
 
-    def __init__(self, lexicon: dict[str, tuple[str, ...]], phoneme_labels: tuple[str, ...]) -> None:
+    Every word owns probability-like mass over prefix positions. Mass can remain at
+    its current prefix or advance when the expected next phoneme is active. There
+    are no hard phoneme commits, winner thresholds, or symbolic transition events.
+    """
+
+    def __init__(
+        self,
+        lexicon: dict[str, tuple[str, ...]],
+        phoneme_labels: tuple[str, ...],
+        dt_s: float = 0.049,
+        transition_tau_s: float = 0.105,
+        memory_tau_s: float = 1.35,
+    ) -> None:
         self.words = tuple(lexicon)
         self.lexicon = lexicon
         self.phoneme_labels = phoneme_labels
         self.phoneme_index = {label: i for i, label in enumerate(phoneme_labels)}
-        self.mass = {word: np.zeros(len(tokens), dtype=np.float64) for word, tokens in lexicon.items()}
-        self.started = {word: False for word in lexicon}
+        self.dt_s = float(dt_s)
+        self.transition_tau_s = float(transition_tau_s)
+        self.memory_tau_s = float(memory_tau_s)
+        self.mass = {
+            word: np.zeros(len(tokens) + 1, dtype=np.float64)
+            for word, tokens in lexicon.items()
+        }
         self.completion_trace = {word: 0.0 for word in lexicon}
-        self.previous_phoneme = np.zeros(len(phoneme_labels), dtype=np.float64)
+        self.reset()
 
     def reset(self) -> None:
         for word, value in self.mass.items():
             value.fill(0.0)
-            self.started[word] = False
+            value[0] = 1.0
             self.completion_trace[word] = 0.0
-        self.previous_phoneme.fill(0.0)
 
     def step(self, phoneme_activation: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        novelty = np.clip(phoneme_activation - 0.90 * self.previous_phoneme, 0.0, 1.0)
+        activation = np.clip(np.asarray(phoneme_activation, dtype=np.float64), 0.0, 1.0)
+        if activation.shape != (len(self.phoneme_labels),):
+            raise ValueError("phoneme activation has wrong shape")
+
+        advance_alpha = 1.0 - math.exp(-self.dt_s / max(self.transition_tau_s, 1e-6))
+        retain = math.exp(-self.dt_s / max(self.memory_tau_s, 1e-6))
         evidence = np.zeros(len(self.words), dtype=np.float64)
         feedback = np.zeros(len(self.phoneme_labels), dtype=np.float64)
 
         for word_i, word in enumerate(self.words):
             tokens = self.lexicon[word]
             old = self.mass[word]
-            new = np.zeros_like(old)
-            indices = [self.phoneme_index[token] for token in tokens]
-            emissions = np.array([phoneme_activation[i] for i in indices])
-            changes = np.array([novelty[i] for i in indices])
+            new = old * retain
+            new[0] = 1.0
 
-            start = 0.0
-            if not self.started[word] and changes[0] > 0.015 and emissions[0] > 0.12:
-                start = changes[0] * emissions[0]
-                if start > 0.004:
-                    self.started[word] = True
+            # Update from the end so one phoneme population cannot skip multiple
+            # template positions during a single 49 ms integration step.
+            for prefix in range(len(tokens), 0, -1):
+                token = tokens[prefix - 1]
+                emission = float(activation[self.phoneme_index[token]])
+                transition = old[prefix - 1] * advance_alpha * emission
+                new[prefix] = np.clip(new[prefix] + transition, 0.0, 1.0)
 
-            new[0] = max(0.985 * old[0] * (0.78 + 0.22 * emissions[0]), start)
-            for j in range(1, len(tokens)):
-                stay = 0.985 * old[j] * (0.80 + 0.20 * emissions[j])
-                transition = old[j - 1] * (0.18 * emissions[j] + 2.25 * changes[j])
-                new[j] = max(stay, transition)
+            self.mass[word] = new
+            completion = float(new[-1])
+            self.completion_trace[word] = max(retain * self.completion_trace[word], completion)
 
-            self.mass[word] = np.clip(new, 0.0, 1.0)
-            prefix = float(np.max(new)) if new.size else 0.0
-            completion_now = float(new[-1]) if new.size else 0.0
-            self.completion_trace[word] = max(0.992 * self.completion_trace[word], completion_now)
-            evidence[word_i] = np.clip(prefix + 2.40 * self.completion_trace[word], 0.0, 1.0)
-            for j, index in enumerate(indices):
-                feedback[index] += new[j]
+            prefix_weights = np.linspace(0.0, 1.0, len(new))
+            partial = float(np.max(new * prefix_weights))
+            evidence[word_i] = np.clip(0.55 * partial + 1.35 * self.completion_trace[word], 0.0, 1.0)
+
+            # Feedback is also soft: expected phonemes are weighted by how much
+            # probability mass currently occupies the prefix immediately before them.
+            for prefix, token in enumerate(tokens):
+                feedback[self.phoneme_index[token]] += new[prefix] * (0.35 + 0.65 * evidence[word_i])
 
         if np.max(feedback, initial=0.0) > 0.0:
             feedback /= np.max(feedback)
-        self.previous_phoneme = phoneme_activation.copy()
         return evidence, feedback

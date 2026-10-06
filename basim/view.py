@@ -6,6 +6,68 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen, QBrush
 from PySide6.QtWidgets import QWidget
 
 from .attractor import CompetitiveAttractorLayer
+from .types import SimulationSnapshot
+
+
+class SpectrogramView(QWidget):
+    """Compact time × frequency display of the exact spectrum driving the model."""
+
+    def __init__(self, frequency_labels: tuple[str, ...], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.frequency_labels = frequency_labels
+        self.history: list[SimulationSnapshot] = []
+        self.total_s = 5.0
+        self.setMinimumHeight(150)
+        self.setMaximumHeight(190)
+
+    def set_history(self, history: list[SimulationSnapshot], total_s: float) -> None:
+        self.history = history
+        self.total_s = max(float(total_s), 1e-6)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, False)
+        p.fillRect(self.rect(), QColor("#111318"))
+
+        title = QFont()
+        title.setPointSize(10)
+        title.setBold(True)
+        p.setFont(title)
+        p.setPen(QColor("#f0f2f5"))
+        p.drawText(12, 20, "Input spectrogram · model frequency bands")
+
+        left, top, right, bottom = 64.0, 30.0, 14.0, 24.0
+        plot = QRectF(left, top, max(20.0, self.width() - left - right), max(20.0, self.height() - top - bottom))
+        p.fillRect(plot, QColor("#090a0d"))
+
+        n_bands = len(self.frequency_labels)
+        if n_bands:
+            band_h = plot.height() / n_bands
+            for band in range(n_bands):
+                label_i = n_bands - 1 - band
+                y = plot.top() + band * band_h
+                p.setPen(QColor(165, 173, 185))
+                small = QFont(); small.setPointSize(7); p.setFont(small)
+                p.drawText(QRectF(3, y, left - 8, band_h), Qt.AlignRight | Qt.AlignVCenter, self.frequency_labels[label_i])
+
+            for snap in self.history:
+                x0 = plot.left() + (snap.time_s / self.total_s) * plot.width()
+                x1 = plot.left() + ((snap.time_s + 0.049) / self.total_s) * plot.width()
+                cell_w = max(1.0, x1 - x0 + 0.5)
+                for band, value in enumerate(snap.spectrum):
+                    row = n_bands - 1 - band
+                    y = plot.top() + row * band_h
+                    v = float(np.clip(value, 0.0, 1.0))
+                    color = QColor(int(22 + 220 * v), int(38 + 145 * v), int(65 + 95 * (1.0 - v)))
+                    p.fillRect(QRectF(x0, y, cell_w, band_h + 0.5), color)
+
+        p.setPen(QPen(QColor(255, 255, 255, 55), 1))
+        p.drawRect(plot)
+        p.setPen(QColor(150, 158, 170))
+        small = QFont(); small.setPointSize(7); p.setFont(small)
+        p.drawText(int(plot.left()), self.height() - 6, "0 s")
+        p.drawText(int(plot.right() - 26), self.height() - 6, f"{self.total_s:.0f} s")
 
 
 class AttractorView(QWidget):
@@ -40,9 +102,7 @@ class AttractorView(QWidget):
         margin, title_h = 16, 34
         size = min(self.width() - 2 * margin, self.height() - 150)
         rect = QRectF(margin, title_h + 4, size, size)
-        font = QFont()
-        font.setPointSize(11)
-        font.setBold(True)
+        font = QFont(); font.setPointSize(11); font.setBold(True)
         p.setFont(font)
         p.setPen(QColor("#f0f2f5"))
         p.drawText(margin, 24, self.layer.name)
@@ -59,9 +119,7 @@ class AttractorView(QWidget):
             p.setBrush(QBrush(QColor(250, 250, 250, int(70 + 170 * activation))))
             p.setPen(QPen(QColor(10, 10, 12, 190), 1))
             p.drawEllipse(QRectF(x - radius, y - radius, 2 * radius, 2 * radius))
-            small = QFont()
-            small.setPointSize(7)
-            p.setFont(small)
+            small = QFont(); small.setPointSize(7); p.setFont(small)
             p.setPen(QColor(245, 245, 245, 220))
             p.drawText(QRectF(x - 38, y + radius + 2, 76, 16), Qt.AlignHCenter, label)
 
@@ -75,9 +133,7 @@ class AttractorView(QWidget):
     def _draw_rankings(self, p: QPainter, y0: float, margin: int) -> None:
         bar_left = margin + 74
         bar_width = max(80, self.width() - bar_left - margin - 34)
-        tiny = QFont()
-        tiny.setPointSize(8)
-        p.setFont(tiny)
+        tiny = QFont(); tiny.setPointSize(8); p.setFont(tiny)
         for row, idx in enumerate(np.argsort(self.layer.activation)[::-1][:3]):
             value = float(self.layer.activation[int(idx)])
             y = y0 + row * 24

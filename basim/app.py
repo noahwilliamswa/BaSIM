@@ -9,16 +9,16 @@ from PySide6.QtWidgets import (
 )
 
 from .engine import BaSimEngine
-from .stimuli import ambiguous_onset_stimulus, default_stimulus
+from .stimuli import SpectralEncoder, ambiguous_onset_stimulus, default_stimulus
 from .types import SimulationConfig
-from .view import AttractorView
+from .view import AttractorView, SpectrogramView
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("BaSIM — layered attractor speech explainer")
-        self.resize(1360, 610)
+        self.resize(1380, 820)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
 
@@ -44,16 +44,22 @@ class MainWindow(QMainWindow):
         controls.addWidget(self.feedback_slider)
         controls.addWidget(self.feedback_value)
         controls.addStretch(1)
-        for text, fn in [("Play", self._play), ("Pause", self._pause), ("Step", self._tick), ("Reset", self._reset)]:
+        for text, fn in [("Play", self._play), ("Pause", self._pause), ("Step 49 ms", self._tick), ("Reset", self._reset)]:
             button = QPushButton(text)
             button.clicked.connect(fn)
             controls.addWidget(button)
 
         self.status = QLabel()
         self.status.setStyleSheet("font-family: monospace; color: #cdd3dc;")
-        self.note = QLabel("1.0 s acoustic event · 5.0 s simulation · 49 ms model step · continuous propagation")
+        self.note = QLabel(
+            "1.0 s spectrotemporal input · 5.0 s simulation · 49 ms step · "
+            "feature→phoneme delay 49 ms · phoneme→lexical delay 49 ms · continuous state after input"
+        )
         self.note.setStyleSheet("color: #8f98a6;")
+        self.note.setWordWrap(True)
+
         self.engine = self._make_engine()
+        self.spectrogram = SpectrogramView(SpectralEncoder.labels)
         self.views = [
             AttractorView(self.engine.feature),
             AttractorView(self.engine.phoneme),
@@ -70,6 +76,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(8)
         layout.addLayout(controls)
         layout.addWidget(self.status)
+        layout.addWidget(self.spectrogram)
         layout.addLayout(row, 1)
         layout.addWidget(self.note)
         self.setCentralWidget(body)
@@ -88,7 +95,7 @@ class MainWindow(QMainWindow):
     def _make_engine(self) -> BaSimEngine:
         stimulus = default_stimulus() if self.preset.currentIndex() == 0 else ambiguous_onset_stimulus()
         gain = self.feedback_slider.value() / 100.0 if self.feedback.isChecked() else 0.0
-        return BaSimEngine(SimulationConfig(0.049, 5.0, gain), stimulus)
+        return BaSimEngine(SimulationConfig(dt_s=0.049, duration_s=5.0, lexical_feedback_gain=gain), stimulus)
 
     def _feedback_changed(self, value: int) -> None:
         self.feedback_value.setText(f"{value / 100.0:.2f}")
@@ -105,11 +112,7 @@ class MainWindow(QMainWindow):
     def _reset(self, *_args) -> None:
         self.timer.stop()
         self.engine = self._make_engine()
-        for view, layer in zip(
-            self.views,
-            [self.engine.feature, self.engine.phoneme, self.engine.lexical],
-            strict=True,
-        ):
+        for view, layer in zip(self.views, [self.engine.feature, self.engine.phoneme, self.engine.lexical], strict=True):
             view.set_layer(layer)
         self._refresh()
 
@@ -125,9 +128,10 @@ class MainWindow(QMainWindow):
         ph = self.engine.top_candidates("phoneme", 1)[0][0]
         word = self.engine.top_candidates("lexical", 1)[0][0]
         self.status.setText(
-            f"t={snap.time_s:0.3f}s / 5.0s   input={snap.stimulus_label:<7}   "
-            f"phoneme≈{ph:<3}   word≈{word}"
+            f"t={snap.time_s:0.3f}s / {self.engine.config.duration_s:.1f}s   "
+            f"input={snap.stimulus_label:<7}   phoneme≈{ph:<3}   word≈{word}"
         )
+        self.spectrogram.set_history(self.engine.history, self.engine.config.duration_s)
         for view in self.views:
             view.update()
 
